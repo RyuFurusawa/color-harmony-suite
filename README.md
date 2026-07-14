@@ -2,7 +2,7 @@
 
 イッテン12色相環／PCCS（色相×トーン）／オストワルト／NCS の4つの表色系・調和理論を、上部タブで切り替えて試せるシミュレーターです（色彩演習 授業用）。
 
-**▶ 実行ページ： https://USERNAME.github.io/REPONAME/**
+**▶ 実行ページ： https://ryufurusawa.github.io/color-harmony-suite/**
 
 - 色相環・トーン図・三角形をクリックして基準色を選択
 - 右側で配色の種類を切り替え
