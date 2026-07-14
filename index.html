@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配色調和シミュレーター統合版 — イッテン／PCCS／オストワルト／NCS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<style>
+  html,body{margin:0;padding:0;background:#eeece8;
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;}
+  #wrap{max-width:1120px;margin:14px auto;padding:0 8px;}
+  h1{font-size:15px;color:#555;font-weight:600;margin:6px 4px 10px;}
+  canvas{max-width:100%;height:auto;display:block;border-radius:10px;
+    box-shadow:0 4px 22px rgba(0,0,0,.10);background:#fff;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>配色調和シミュレーター 統合版 — 上のタブで体系を切り替え、同じ基準色を4つの理論で見比べよう</h1>
+</div>
+<script>
+/* =====================================================================
+   配色調和シミュレーター統合版
+   イッテン12色相環 ／ PCCS 色相×トーン ／ オストワルト ／ NCS
+   - 各体系は独立した IIFE モジュール（内部変数はクロージャに封じ込め）
+   - ホストが上部タブでモジュールを切替え、translate で座標をずらして描画
+   - 色は各体系の構造を再現した近似表示（関係は保たれるが絶対色みは色票と異なる）
+   ===================================================================== */
+
+// ========== 共通ホスト ==========
+const CANVAS_W = 1120, CANVAS_H = 760, TAB_H = 54;
+let MODS = [];
+let activeIdx = 0;
+let tabRects = [];
+
+function setup(){
+  const cnv = createCanvas(CANVAS_W, CANVAS_H);
+  if (document.getElementById('wrap')){ cnv.parent('wrap'); }  // Web Editorには無いので存在時のみ
+  textFont('sans-serif');
+  MODS = [IttenModule, PccsModule, OstwaldModule, NcsModule];
+  for (let i = 0; i < MODS.length; i++){ if (MODS[i].setup){ MODS[i].setup(); } }
+  computeTabs();
+  noLoop();   // 操作時のみ redraw（軽量）
+}
+
+function computeTabs(){
+  tabRects = [];
+  const m = 14, gap = 8, n = MODS.length;
+  const w = (CANVAS_W - m*2 - gap*(n-1)) / n;
+  for (let i = 0; i < n; i++){ tabRects.push({ x:m + i*(w+gap), y:10, w:w, h:34 }); }
+}
+
+function draw(){
+  background(246,245,242);
+  drawTabs();
+  const mod = MODS[activeIdx];
+  const xOff = Math.round((CANVAS_W - mod.W) / 2);
+  push();
+  translate(xOff, TAB_H);
+  mod.draw();
+  pop();
+}
+
+function drawTabs(){
+  for (let i = 0; i < tabRects.length; i++){
+    const b = tabRects[i], on = (i === activeIdx);
+    noStroke(); fill(on ? color(38,42,50) : color(228,226,222));
+    rect(b.x, b.y, b.w, b.h, 8);
+    fill(on ? 255 : 95); textAlign(CENTER, CENTER); textSize(14);
+    textStyle(on ? BOLD : NORMAL);
+    text(MODS[i].label, b.x + b.w/2, b.y + b.h/2);
+    textStyle(NORMAL);
+  }
+}
+
+function localCoords(){
+  const mod = MODS[activeIdx];
+  const xOff = Math.round((CANVAS_W - mod.W) / 2);
+  return [mouseX - xOff, mouseY - TAB_H];
+}
+
+function mousePressed(){
+  for (let i = 0; i < tabRects.length; i++){
+    const b = tabRects[i];
+    if (mouseX>=b.x && mouseX<=b.x+b.w && mouseY>=b.y && mouseY<=b.y+b.h){
+      activeIdx = i; redraw(); return false;
+    }
+  }
+  const lc = localCoords(), mod = MODS[activeIdx];
+  if (mod.press){ mod.press(lc[0], lc[1], true); }
+  redraw(); return false;
+}
+
+function mouseDragged(){
+  const lc = localCoords(), mod = MODS[activeIdx];
+  if (mod.press){ mod.press(lc[0], lc[1], false); }
+  redraw(); return false;
+}
+
+function keyPressed(){
+  const mod = MODS[activeIdx];
+  if (mod.key){ mod.key(key, keyCode); }
+  redraw();
+}
+
+// =====================================================================
+//  モジュール1：イッテン 12色相環
+// =====================================================================
+const IttenModule = (function(){
+  const W = 960, H = 580;
+  const HUES = [
+    { ja:'黄',   c:[255,237,  0], lv:9   },
+    { ja:'黄橙', c:[250,187,  0], lv:8.5 },
+    { ja:'橙',   c:[243,146,  0], lv:8   },
+    { ja:'赤橙', c:[233, 78, 27], lv:7   },
+    { ja:'赤',   c:[226,  0, 26], lv:6   },
+    { ja:'赤紫', c:[165, 22,128], lv:4.5 },
+    { ja:'紫',   c:[102, 36,131], lv:3   },
+    { ja:'青紫', c:[ 49, 39,131], lv:3.5 },
+    { ja:'青',   c:[  0, 92,169], lv:4   },
+    { ja:'青緑', c:[  0,148,137], lv:5   },
+    { ja:'緑',   c:[  0,151, 57], lv:6   },
+    { ja:'黄緑', c:[149,193, 31], lv:7.5 },
+  ];
+  const SCHEMES = [
+    { key:'dyad',   label:'ダイアード',                 offsets:[0,6],      extras:[],        desc:'補色2色 — 色相環で正反対（直径）' },
+    { key:'split',  label:'スプリット\nコンプリメンタリー', offsets:[0,5,7],   extras:[],        desc:'基準色＋補色の両隣2色（二等辺三角形）' },
+    { key:'triad',  label:'トライアド',                 offsets:[0,4,8],    extras:[],        desc:'色相環を3等分した正三角形の3色' },
+    { key:'tetrad', label:'テトラード',                 offsets:[0,3,6,9],  extras:[],        desc:'色相環を4等分した正方形の4色' },
+    { key:'pentad', label:'ペンタード',                 offsets:[0,4,8],    extras:['W','K'], desc:'トライアド ＋ 白 ＋ 黒（5色）' },
+    { key:'hexad',  label:'ヘキサード',                 offsets:[0,3,6,9],  extras:['W','K'], desc:'テトラード ＋ 白 ＋ 黒（6色）' },
+  ];
+  let baseIndex = 0, schemeIndex = 2, areaMode = false;
+  const cx = 235, cy = 330, rOuter = 160, rInner = 100;
+  let btnRects = [], areaBtn = {};
+
+  function computeButtons(){
+    btnRects = [];
+    const n = SCHEMES.length, m = 16, gap = 8, h = 40, y = 46;
+    const w = (W - m*2 - gap*(n-1)) / n;
+    for (let i = 0; i < n; i++){ btnRects.push({ x: m + i*(w+gap), y: y, w: w, h: h }); }
+  }
+  function selectedHueIndices(){
+    const s = SCHEMES[schemeIndex]; const arr = [];
+    for (let o of s.offsets){ arr.push((baseIndex + o) % 12); }
+    return arr;
+  }
+  function paletteColors(){
+    const s = SCHEMES[schemeIndex]; const cols = [];
+    for (let o of s.offsets){
+      const h = HUES[(baseIndex+o)%12];
+      cols.push({ c:h.c, name:h.ja, lv:h.lv, base:(o===0), achrom:false });
+    }
+    for (let e of s.extras){
+      if (e === 'W'){ cols.push({ c:[255,255,255], name:'白', lv:null, base:false, achrom:true }); }
+      else          { cols.push({ c:[0,0,0],       name:'黒', lv:null, base:false, achrom:true }); }
+    }
+    return cols;
+  }
+  function draw(){
+    drawHeader(); drawButtons();
+    const sel = selectedHueIndices();
+    drawWheel(sel); drawFigure(sel); drawPalette(); drawFooter();
+  }
+  function drawHeader(){
+    noStroke(); fill(30); textAlign(LEFT, TOP); textSize(18);
+    text('イッテン12色相環  配色調和シミュレーター', 16, 14);
+    const s = SCHEMES[schemeIndex];
+    fill(95); textSize(13); textAlign(LEFT, TOP); text(s.desc, 16, 96);
+    fill(40); textAlign(RIGHT, TOP); text('基準色： ' + HUES[baseIndex].ja, W-16, 96);
+  }
+  function drawButtons(){
+    textAlign(CENTER, CENTER);
+    for (let i = 0; i < SCHEMES.length; i++){
+      const b = btnRects[i]; const active = (i === schemeIndex);
+      fill(active ? 40 : 255); stroke(active ? 40 : 185); strokeWeight(1.5);
+      rect(b.x, b.y, b.w, b.h, 6); noStroke();
+      fill(active ? 255 : 60); textSize(12);
+      const lines = SCHEMES[i].label.split('\n'); const lh = 14;
+      const sy = b.y + b.h/2 - (lines.length-1)*lh/2;
+      for (let j = 0; j < lines.length; j++){ text(lines[j], b.x + b.w/2, sy + j*lh); }
+    }
+  }
+  function drawWheel(sel){
+    const step = TWO_PI / 12;
+    for (let i = 0; i < 12; i++){
+      const a0 = -HALF_PI + (i - 0.5)*step; const a1 = -HALF_PI + (i + 0.5)*step;
+      const hl = sel.includes(i);
+      fill(HUES[i].c[0], HUES[i].c[1], HUES[i].c[2]);
+      if (hl){ stroke(30); strokeWeight(3.5); } else { stroke(255); strokeWeight(1.5); }
+      beginShape();
+      for (let a = a0; a <= a1 + 0.0001; a += 0.03){ vertex(cx + cos(a)*rOuter, cy + sin(a)*rOuter); }
+      for (let a = a1; a >= a0 - 0.0001; a -= 0.03){ vertex(cx + cos(a)*rInner, cy + sin(a)*rInner); }
+      endShape(CLOSE);
+    }
+    textAlign(CENTER, CENTER); textSize(13);
+    for (let i = 0; i < 12; i++){
+      const a = -HALF_PI + i*step;
+      const lx = cx + cos(a)*(rOuter+24); const ly = cy + sin(a)*(rOuter+24);
+      if (i === baseIndex){
+        fill(40); noStroke(); rectMode(CENTER); rect(lx, ly, 32, 20, 5); rectMode(CORNER); fill(255);
+      } else { noStroke(); fill(55); }
+      text(HUES[i].ja, lx, ly);
+    }
+  }
+  function drawFigure(sel){
+    const step = TWO_PI/12; const pts = [];
+    for (let idx of sel){ const a = -HALF_PI + idx*step; pts.push([cx + cos(a)*rInner, cy + sin(a)*rInner]); }
+    stroke(35); strokeWeight(2); noFill();
+    if (pts.length === 2){ line(pts[0][0], pts[0][1], pts[1][0], pts[1][1]); }
+    else { beginShape(); for (let p of pts){ vertex(p[0], p[1]); } endShape(CLOSE); }
+    noStroke(); fill(35);
+    for (let p of pts){ circle(p[0], p[1], 9); }
+    const s = SCHEMES[schemeIndex];
+    if (s.extras.length > 0){
+      const sw = 20, gap = 6; const totalW = s.extras.length*sw + (s.extras.length-1)*gap;
+      const startX = cx - totalW/2; const yy = cy - 4;
+      for (let k = 0; k < s.extras.length; k++){
+        const ex = startX + k*(sw+gap);
+        fill(s.extras[k] === 'W' ? 255 : 0); stroke(120); strokeWeight(1);
+        rect(ex, yy - sw/2, sw, sw, 3);
+      }
+      noStroke(); fill(90); textSize(11); textAlign(CENTER, TOP); text('＋白＋黒', cx, yy + sw/2 + 4);
+    }
+  }
+  function drawAreaButton(rx, rw, ry){
+    const w = 168, h = 26;
+    areaBtn = { x: rx + rw - w, y: ry - 32, w: w, h: h }; const b = areaBtn;
+    fill(areaMode ? 40 : 255); stroke(areaMode ? 40 : 185); strokeWeight(1.5);
+    rect(b.x, b.y, b.w, b.h, 6);
+    noStroke(); fill(areaMode ? 255 : 60); textSize(12); textAlign(CENTER, CENTER);
+    text(areaMode ? '面積比：ON（明度の逆比）' : '面積比論を適用', b.x + b.w/2, b.y + b.h/2);
+  }
+  function fmtLv(v){ return Number.isInteger(v) ? String(v) : v.toFixed(1); }
+  function drawPalette(){
+    const cols = paletteColors();
+    const rx = 470, ry = 152, rw = 474, rh = 300; const n = cols.length;
+    let widths = [];
+    if (areaMode){
+      const equal = rw / n;
+      const achromCount = cols.filter(c => c.achrom).length;
+      const remaining = rw - achromCount * equal;
+      const chromWs = cols.map(c => c.achrom ? 0 : 1 / c.lv);
+      const chromSum = chromWs.reduce((a,b) => a + b, 0);
+      widths = cols.map((c,i) => c.achrom ? equal : (chromSum > 0 ? chromWs[i] / chromSum * remaining : equal));
+    } else { widths = cols.map(() => rw / n); }
+    noStroke(); fill(95); textSize(12); textAlign(LEFT, BOTTOM);
+    text(areaMode ? '配色プレビュー（面積対比：有彩色＝明度の逆比／白・黒は等分）' : '配色プレビュー（横方向に均等分割）', rx, ry - 10);
+    drawAreaButton(rx, rw, ry);
+    let x = rx;
+    for (let k = 0; k < n; k++){ noStroke(); fill(cols[k].c[0], cols[k].c[1], cols[k].c[2]); rect(x, ry, widths[k], rh); x += widths[k]; }
+    noFill(); stroke(210); strokeWeight(1); rect(rx, ry, rw, rh);
+    x = rx;
+    for (let k = 0; k < n; k++){
+      const c = cols[k]; const ck = x + widths[k]/2;
+      if (c.base){ noStroke(); fill(40); textSize(11); textAlign(CENTER, BOTTOM); text('▼ 基準色', ck, ry - 5); }
+      noStroke(); fill(40); textSize(widths[k] < 42 ? 12 : 15); textAlign(CENTER, TOP);
+      text(c.name, ck, ry + rh + 10);
+      fill(120); textSize(11); text(c.achrom ? '無彩色（等分）' : '明度値 ' + fmtLv(c.lv), ck, ry + rh + 32);
+      fill(155); textSize(10); text(toHex(c.c), ck, ry + rh + 50);
+      x += widths[k];
+    }
+  }
+  function drawFooter(){
+    noStroke(); fill(150); textSize(11); textAlign(LEFT, TOP);
+    text('色相環をクリック＝基準色　／　←→：基準色　↑↓：配色　A：面積比ON/OFF', 16, 562);
+  }
+  function toHex(c){
+    let h = '#';
+    for (let v of c){ let s = Math.round(v).toString(16).toUpperCase(); if (s.length < 2){ s = '0' + s; } h += s; }
+    return h;
+  }
+  function press(mx,my,isPress){
+    if (isPress){
+      for (let i = 0; i < btnRects.length; i++){
+        const b = btnRects[i];
+        if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h){ schemeIndex = i; return; }
+      }
+      if (areaBtn.x !== undefined && mx>=areaBtn.x && mx<=areaBtn.x+areaBtn.w && my>=areaBtn.y && my<=areaBtn.y+areaBtn.h){ areaMode = !areaMode; return; }
+    }
+    const d = dist(mx, my, cx, cy);
+    if (d > rInner-12 && d < rOuter+16){
+      const a = atan2(my-cy, mx-cx); const step = TWO_PI/12;
+      let rel = a - (-HALF_PI); rel = ((rel % TWO_PI) + TWO_PI) % TWO_PI;
+      baseIndex = round(rel/step) % 12;
+    }
+  }
+  function key(k,kc){
+    if (kc === LEFT_ARROW)  { baseIndex = (baseIndex+11)%12; }
+    else if (kc === RIGHT_ARROW){ baseIndex = (baseIndex+1)%12; }
+    else if (kc === UP_ARROW)   { schemeIndex = (schemeIndex+SCHEMES.length-1)%SCHEMES.length; }
+    else if (kc === DOWN_ARROW) { schemeIndex = (schemeIndex+1)%SCHEMES.length; }
+    else if (k === 'a' || k === 'A'){ areaMode = !areaMode; }
+  }
+  return { id:'itten', label:'イッテン12色相環', W:W, H:H, setup:computeButtons, draw:draw, press:press, key:key };
+})();
+
+// =====================================================================
+//  モジュール2：PCCS 色相 × トーン
+// =====================================================================
+const PccsModule = (function(){
+  const W = 1120, H = 700;
+  const HUE_DEG = [345,0,9,18,28,38,46,55,66,78,104,130,152,175,185,195,206,218,234,250,267,285,302,320];
+  function hueNo(i){ return i + 1; }
+  // col: 0=低彩度 1=中彩度 2=高彩度 3=純色 ／ slot: 列内の上からの位置
+  // 図は右端 v を頂点に左へ開く三角形（ペナント形）
+  const TONES = [
+    { key:'p',   ja:'ペール',             s:22,  b:100, col:0, slot:0 },
+    { key:'ltg', ja:'ライトグレイッシュ', s:18,  b:86,  col:0, slot:1 },
+    { key:'g',   ja:'グレイッシュ',       s:24,  b:62,  col:0, slot:2 },
+    { key:'dkg', ja:'ダークグレイッシュ', s:34,  b:38,  col:0, slot:3 },
+    { key:'lt',  ja:'ライト',             s:52,  b:100, col:1, slot:0 },
+    { key:'sf',  ja:'ソフト',             s:48,  b:88,  col:1, slot:1 },
+    { key:'d',   ja:'ダル',               s:55,  b:70,  col:1, slot:2 },
+    { key:'dk',  ja:'ダーク',             s:85,  b:48,  col:1, slot:3 },
+    { key:'b',   ja:'ブライト',           s:85,  b:100, col:2, slot:0 },
+    { key:'s',   ja:'ストロング',         s:95,  b:88,  col:2, slot:1 },
+    { key:'dp',  ja:'ディープ',           s:100, b:62,  col:2, slot:2 },
+    { key:'v',   ja:'ビビッド',           s:100, b:100, col:3, slot:0 },
+  ];
+  const VIVID = 11;
+  const COL_COUNT = [4, 4, 3, 1];
+  function toneYOff(t){
+    const n = COL_COUNT[t.col];
+    return t.slot - (n - 1) / 2;   // 4円:±1.5,±0.5 / 3円:±1,0 / 1円:0
+  }
+  const HUE_RELS = [
+    { ja:'同一色相', offs:[0],     note:'色相差0' },
+    { ja:'隣接色相', offs:[0,1],   note:'色相差1' },
+    { ja:'類似色相', offs:[0,3],   note:'色相差2〜3' },
+    { ja:'中差色相', offs:[0,6],   note:'色相差4〜7' },
+    { ja:'対照色相', offs:[0,8],   note:'色相差8' },
+    { ja:'補色色相', offs:[0,12],  note:'色相差11〜12' },
+  ];
+  const TONE_RELS = [
+    { ja:'同一トーン', mode:'ident' },
+    { ja:'類似トーン', mode:'sim' },
+    { ja:'対照トーン', mode:'contr' },
+  ];
+  let baseHue = 1, baseTone = VIVID, hueRelIdx = 4, toneRelIdx = 0;
+  const RING_CX = 205, RING_CY = 315, R_OUT = 140, R_IN = 84;
+  const TM = { x:380, y:112, w:290, h:346 };
+  let toneCellRects = [], hueRelRects = [], toneRelRects = [];
+
+  function hsv2rgb(h, s, v){
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = v - c;
+    let r, g, b;
+    if (h < 60){ r=c; g=x; b=0; }
+    else if (h < 120){ r=x; g=c; b=0; }
+    else if (h < 180){ r=0; g=c; b=x; }
+    else if (h < 240){ r=0; g=x; b=c; }
+    else if (h < 300){ r=x; g=0; b=c; }
+    else { r=c; g=0; b=x; }
+    return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+  }
+  function toneColor(hueIdx, toneIdx){ const t = TONES[toneIdx]; return hsv2rgb(HUE_DEG[hueIdx], t.s/100, t.b/100); }
+  function hueSet(){ const offs = HUE_RELS[hueRelIdx].offs; return offs.map(o => (baseHue + o + 24) % 24); }
+  function toneSet(){
+    const mode = TONE_RELS[toneRelIdx].mode;
+    if (mode === 'ident'){ return [baseTone]; }
+    const b = TONES[baseTone];
+    const bx = b.col, by = toneYOff(b);
+    let best = -1, bestD = (mode === 'sim') ? 1e9 : -1;
+    for (let i = 0; i < TONES.length; i++){
+      if (i === baseTone){ continue; }
+      const t = TONES[i];
+      const d = dist(bx, by, t.col, toneYOff(t));
+      if (mode === 'sim' && d < bestD){ bestD = d; best = i; }
+      if (mode === 'contr' && d > bestD){ bestD = d; best = i; }
+    }
+    return [baseTone, best];
+  }
+  function draw(){
+    drawHeader();
+    const hs = hueSet(); const ts = toneSet();
+    drawHueRing(hs); drawToneMap(ts); drawControls(); drawPreview(hs, ts);
+  }
+  function drawHeader(){
+    noStroke(); fill(30); textAlign(LEFT, TOP); textSize(18);
+    text('PCCS 配色調和シミュレーター  ―  色相 × トーン', 20, 14);
+    const code = TONES[baseTone].key + hueNo(baseHue);
+    fill(70); textSize(13);
+    text('基準色： ' + code + '（' + TONES[baseTone].ja + ' の ' + hueNo(baseHue) + '）', 20, 42);
+    fill(150); textSize(11);
+    text('色相リング／トーンマップをクリックで基準色を選択。右の関係ボタンで配色を切替。', 20, 62);
+  }
+  function drawHueRing(hs){
+    const step = TWO_PI / 24;
+    // 同一トーン選択時は、色相環そのものを基準トーンで描く
+    const ringTone = (TONE_RELS[toneRelIdx].mode === 'ident') ? baseTone : VIVID;
+    for (let i = 0; i < 24; i++){
+      const a0 = -HALF_PI + (i - 0.5) * step;
+      const a1 = -HALF_PI + (i + 0.5) * step;
+      const c = toneColor(i, ringTone);
+      const inSet = hs.includes(i);
+      fill(c[0], c[1], c[2]);
+      if (inSet){ stroke(25); strokeWeight(3.5); } else { stroke(255); strokeWeight(1); }
+      beginShape();
+      for (let a = a0; a <= a1 + 0.0001; a += 0.02){ vertex(RING_CX + cos(a)*R_OUT, RING_CY + sin(a)*R_OUT); }
+      for (let a = a1; a >= a0 - 0.0001; a -= 0.02){ vertex(RING_CX + cos(a)*R_IN, RING_CY + sin(a)*R_IN); }
+      endShape(CLOSE);
+    }
+    textAlign(CENTER, CENTER); textSize(11);
+    for (let i = 0; i < 24; i++){
+      const a = -HALF_PI + i * step;
+      const lx = RING_CX + cos(a) * (R_OUT + 16);
+      const ly = RING_CY + sin(a) * (R_OUT + 16);
+      if (i === baseHue){
+        fill(30); noStroke(); rectMode(CENTER); rect(lx, ly, 22, 16, 4); rectMode(CORNER); fill(255);
+      } else { noStroke(); fill(90); }
+      text(hueNo(i), lx, ly);
+    }
+    if (hs.length >= 2){
+      const pts = hs.map(i => {
+        const a = -HALF_PI + i * step;
+        return [RING_CX + cos(a)*R_IN, RING_CY + sin(a)*R_IN];
+      });
+      stroke(35); strokeWeight(2); noFill();
+      if (pts.length === 2){ line(pts[0][0], pts[0][1], pts[1][0], pts[1][1]); }
+      else { beginShape(); for (let p of pts){ vertex(p[0], p[1]); } endShape(CLOSE); }
+      noStroke(); fill(35);
+      for (let p of pts){ circle(p[0], p[1], 8); }
+    }
+    noStroke(); fill(90); textSize(12); textAlign(CENTER, TOP);
+    text('PCCS 24色相環（' + ((TONE_RELS[toneRelIdx].mode === 'ident' && baseTone !== VIVID)
+         ? TONES[baseTone].ja + 'トーン' : '純色') + '）', RING_CX, RING_CY + R_OUT + 30);
+  }
+  function drawToneMap(ts){
+    noStroke(); fill(90); textSize(12); textAlign(LEFT, BOTTOM);
+    text('トーン図（色相 ' + hueNo(baseHue) + '）', TM.x, TM.y - 8);
+
+    // レイアウト定数：正円・4列・共通中心線
+    const D = 54;                     // 円の直径
+    const colGap = 72;                // 列の水平間隔
+    const rowUnit = 70;               // 縦1単位
+    const originX = TM.x + D/2 + 6;   // 1列目の中心x
+    const centerY = TM.y + TM.h/2;    // 共通中心線
+
+    toneCellRects = [];
+    for (let i = 0; i < TONES.length; i++){
+      const t = TONES[i];
+      const cxp = originX + t.col * colGap;          // 列内は同一x（左右ずれなし）
+      const cyp = centerY + toneYOff(t) * rowUnit;   // 水平合わせ
+      toneCellRects.push({ x:cxp, y:cyp, r:D/2, idx:i });
+      const c = toneColor(baseHue, i);
+      fill(c[0], c[1], c[2]);
+      const isBase = (i === baseTone);
+      const inSet = ts.includes(i);
+      if (isBase){ stroke(20); strokeWeight(3.5); }
+      else if (inSet){ stroke(20); strokeWeight(2.5); }
+      else { stroke(230); strokeWeight(1); }
+      circle(cxp, cyp, D);
+      const lum = 0.2126*c[0] + 0.7152*c[1] + 0.0722*c[2];
+      noStroke(); fill(lum > 140 ? 40 : 245); textSize(13); textAlign(CENTER, CENTER);
+      text(t.key, cxp, cyp);
+    }
+    // 軸の補助ラベル
+    noStroke(); fill(160); textSize(10); textAlign(CENTER, TOP);
+    const axisW = 3 * colGap + D;
+    text('← 低彩度        彩度        高彩度 →',
+         originX - D/2 + axisW/2, centerY + 2 * rowUnit + D/2 + 6);
+    push();
+    translate(TM.x - 8, centerY);
+    rotate(-HALF_PI);
+    fill(160); textSize(10); textAlign(CENTER, CENTER);
+    text('← 低明度   明度   高明度 →', 0, 0);
+    pop();
+  }
+  function drawControls(){
+    const colX = 700, colW = 190, bh = 30, gap = 6;
+    noStroke(); fill(60); textSize(13); textAlign(LEFT, TOP);
+    text('色相の関係', colX, 112);
+    hueRelRects = [];
+    for (let i = 0; i < HUE_RELS.length; i++){
+      const y = 134 + i * (bh + gap);
+      const active = (i === hueRelIdx);
+      hueRelRects.push({ x:colX, y:y, w:colW, h:bh });
+      fill(active ? 40 : 255); stroke(active ? 40 : 190); strokeWeight(1.4);
+      rect(colX, y, colW, bh, 6);
+      noStroke(); fill(active ? 255 : 60); textSize(12); textAlign(LEFT, CENTER);
+      text(HUE_RELS[i].ja, colX + 12, y + bh/2);
+      fill(active ? 210 : 150); textSize(10); textAlign(RIGHT, CENTER);
+      text(HUE_RELS[i].note, colX + colW - 10, y + bh/2);
+    }
+    const colX2 = 910, colW2 = 190;
+    noStroke(); fill(60); textSize(13); textAlign(LEFT, TOP);
+    text('トーンの関係', colX2, 112);
+    toneRelRects = [];
+    for (let i = 0; i < TONE_RELS.length; i++){
+      const y = 134 + i * (bh + gap);
+      const active = (i === toneRelIdx);
+      toneRelRects.push({ x:colX2, y:y, w:colW2, h:bh });
+      fill(active ? 40 : 255); stroke(active ? 40 : 190); strokeWeight(1.4);
+      rect(colX2, y, colW2, bh, 6);
+      noStroke(); fill(active ? 255 : 60); textSize(12); textAlign(LEFT, CENTER);
+      text(TONE_RELS[i].ja, colX2 + 12, y + bh/2);
+    }
+    noStroke(); fill(90); textSize(12); textAlign(LEFT, TOP);
+    text('配色： ' + HUE_RELS[hueRelIdx].ja + ' × ' + TONE_RELS[toneRelIdx].ja, colX2, 134 + 3*(bh+gap) + 12);
+  }
+  function drawPreview(hs, ts){
+    const px = 700, py = 388, pw = 400, ph = 290;
+    noStroke(); fill(60); textSize(13); textAlign(LEFT, BOTTOM);
+    text('配色プレビュー（トーン記号 × 色相番号）', px, py - 8);
+    const cols = hs.length, rows = ts.length;
+    const cellW = Math.min(pw / cols, 200);
+    const cellH = Math.min(ph / rows, 145);
+    const gridW = cellW * cols, gridH = cellH * rows;
+    for (let r = 0; r < rows; r++){
+      for (let cIdx = 0; cIdx < cols; cIdx++){
+        const hueIdx = hs[cIdx];
+        const toneIdx = ts[r];
+        const col = toneColor(hueIdx, toneIdx);
+        const x = px + cIdx * cellW;
+        const y = py + r * cellH;
+        noStroke(); fill(col[0], col[1], col[2]);
+        rect(x, y, cellW, cellH);
+        const lum = 0.2126*col[0] + 0.7152*col[1] + 0.0722*col[2];
+        fill(lum > 140 ? 40 : 245);
+        textSize(13); textAlign(LEFT, TOP);
+        text(TONES[toneIdx].key + hueNo(hueIdx), x + 8, y + 6);
+      }
+    }
+    noFill(); stroke(210); strokeWeight(1); rect(px, py, gridW, gridH);
+  }
+  function hitR(mx,my,b){ return mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h; }
+  function press(mx,my,isPress){
+    if (isPress){
+      for (let i = 0; i < hueRelRects.length; i++){ if (hitR(mx,my,hueRelRects[i])){ hueRelIdx = i; return; } }
+      for (let i = 0; i < toneRelRects.length; i++){ if (hitR(mx,my,toneRelRects[i])){ toneRelIdx = i; return; } }
+      for (let i = 0; i < toneCellRects.length; i++){ const b = toneCellRects[i]; if (dist(mx,my,b.x,b.y) <= b.r){ baseTone = b.idx; return; } }
+    }
+    const d = dist(mx, my, RING_CX, RING_CY);
+    if (d > R_IN - 12 && d < R_OUT + 14){
+      const a = atan2(my - RING_CY, mx - RING_CX); const step = TWO_PI / 24;
+      let rel = a - (-HALF_PI); rel = ((rel % TWO_PI) + TWO_PI) % TWO_PI;
+      baseHue = round(rel / step) % 24;
+    }
+  }
+  function key(k,kc){
+    if (kc === LEFT_ARROW){ baseHue = (baseHue + 23) % 24; }
+    else if (kc === RIGHT_ARROW){ baseHue = (baseHue + 1) % 24; }
+    else if (kc === UP_ARROW){ baseTone = (baseTone + TONES.length - 1) % TONES.length; }
+    else if (kc === DOWN_ARROW){ baseTone = (baseTone + 1) % TONES.length; }
+  }
+  return { id:'pccs', label:'PCCS 色相×トーン', W:W, H:H, draw:draw, press:press, key:key };
+})();
+
+// =====================================================================
+//  モジュール3+4：オストワルト ／ NCS（共通実装）
+//  ※ 上部タブで theory を切替。基準色相・トーンは各体系の三角形／環で選択。
+// =====================================================================
+const NcsOstwald = (function(){
+  const CW = 1080, CH = 664;
+  const CCX = 196, CCY = 178, R_OUT = 120, R_IN = 78;
+  const Wx = 66, Wy = 356, Bx = 66, By = 592, Cx = 316, Cy = 474;
+  const PANX = 392, PANW = 226;
+  const PALX = 636, PALY = 100, PALW = 420, PALH = 466;
+
+  let theory = 'NCS';
+  let scheme = 'ncs_hue';
+  let showLabels = true;
+  let baseHue = 170, baseS = 20, baseC = 40;
+  let baseHueO = 8, baseWi = 4, baseBi = 1;
+
+  const NCS_ELEM = [[250,208,0],[199,32,54],[0,116,188],[0,152,97]];
+  const NCS_E = ['Y','R','B','G'];
+  const LET = ['a','c','e','g','i','l','n','p'];
+  const WC  = [89,56,35,22,14,8.9,5.6,3.5];
+  const BC  = [11,44,65,78,86,91.1,94.4,96.5];
+  const OST_P_IDX = [2,5,8,11,14,17,20,23];
+  const OST_P_RGB = [[252,219,0],[240,120,10],[212,28,44],[136,44,132],[36,58,150],[0,140,160],[0,150,92],[120,176,46]];
+  let ostHueRGB = [];
+
+  const SCHEMES = {
+    NCS:[
+      {id:'ncs_hue',   jp:'同一色相配色',        desc:'色相を固定し、明清色〜暗色へトーンを変える'},
+      {id:'ncs_nuance',jp:'同一ニュアンス配色',  desc:'ニュアンス(s,c)を保ち、色相を大きく変える'},
+      {id:'ncs_c',     jp:'色みが等しい (c一定)', desc:'色みcを一定に、黒みsを変える＝グレイ軸に平行'},
+      {id:'ncs_s',     jp:'黒みが等しい (s一定)', desc:'黒みsを一定に、色みcを変える'},
+      {id:'ncs_w',     jp:'白みが等しい (w一定)', desc:'白みwを一定に、s と c の比を変える'},
+      {id:'ncs_near',  jp:'近似色相配色',        desc:'ニュアンスを保ち、近い色相どうしで組む'}
+    ],
+    OSTWALD:[
+      {id:'ost_isotint',   jp:'等白系列 isotints',   desc:'白色量が等しい（記号の前の文字が同じ）'},
+      {id:'ost_isotone',   jp:'等黒系列 isotones',   desc:'黒色量が等しい（記号の後の文字が同じ）'},
+      {id:'ost_isochrome', jp:'等純系列 isochromes', desc:'純色量と白色量の比が等しい＝シャドウシリーズ'},
+      {id:'ost_similar',   jp:'類似色の調和',        desc:'等価値色環上／色相差2〜4'},
+      {id:'ost_contrast',  jp:'異色の調和',          desc:'色相差8の3分割トライアド'},
+      {id:'ost_opposite',  jp:'反対色の調和',        desc:'色相差12＝補色対'},
+      {id:'ost_achromatic',jp:'無彩色の調和',        desc:'等間隔に選んだ無彩色段階'}
+    ]
+  };
+  let schemeRects = [], toggleRect;
+
+  function setup(){ buildOstHues(); }
+  function buildOstHues(){
+    ostHueRGB = [];
+    for (let h = 1; h <= 24; h++){
+      let g = (((h-2)%24)+24)%24;
+      let seg = floor(g/3);
+      let t = (g%3)/3;
+      let p0 = OST_P_RGB[seg];
+      let p1 = OST_P_RGB[(seg+1)%8];
+      ostHueRGB[h] = [lerp(p0[0],p1[0],t), lerp(p0[1],p1[1],t), lerp(p0[2],p1[2],t)];
+    }
+  }
+  function setTheory(t){ if (theory !== t){ theory = t; scheme = SCHEMES[t][0].id; } }
+
+  function ncsFull(hue){
+    hue = ((hue%400)+400)%400;
+    let seg = floor(hue/100)%4;
+    let t = (hue%100)/100;
+    let p0 = NCS_ELEM[seg];
+    let p1 = NCS_ELEM[(seg+1)%4];
+    return [lerp(p0[0],p1[0],t), lerp(p0[1],p1[1],t), lerp(p0[2],p1[2],t)];
+  }
+  function ncsRGB(hue,s,c){
+    let w = 100-s-c;
+    let f = ncsFull(hue);
+    return [(w*255+c*f[0])/100, (w*255+c*f[1])/100, (w*255+c*f[2])/100];
+  }
+  function ostRGB(hue,wi,bi){
+    let white=WC[wi], black=BC[bi], pure=100-white-black;
+    let f = ostHueRGB[hue];
+    return [(white*255+pure*f[0])/100, (white*255+pure*f[1])/100, (white*255+pure*f[2])/100];
+  }
+  function pad2(n){ n=round(n); return (n<10 ? '0'+n : ''+n); }
+  function ncsHueLabel(hue){
+    hue = ((round(hue/10)*10)%400+400)%400;
+    let q = floor(hue/100)%4;
+    let w = hue%100;
+    if (w===0){ return NCS_E[q]; }
+    return NCS_E[q]+w+NCS_E[(q+1)%4];
+  }
+  function ncsLabel(hue,s,c){ return 'S '+pad2(round(s/5)*5)+pad2(round(c/5)*5)+'-'+ncsHueLabel(hue); }
+  function ostLabel(hue,wi,bi){ return hue+LET[wi]+LET[bi]; }
+  function clampSC(s,c){
+    s = constrain(s,0,98); c = constrain(c,0,98);
+    if (s+c>98){ let k=98/(s+c); s*=k; c*=k; }
+    return [round(s/5)*5, round(c/5)*5];
+  }
+  function wrapHueO(h){ return ((h-1)%24+24)%24+1; }
+  function pickEven(arr,n){
+    if (arr.length<=n){ return arr.slice(); }
+    let out=[];
+    for (let i=0;i<n;i++){ out.push(arr[round(i*(arr.length-1)/(n-1))]); }
+    return [...new Set(out)];
+  }
+  function mkNCS(h,s,c){ h=((h%400)+400)%400; return {rgb:ncsRGB(h,s,c), label:ncsLabel(h,s,c), s:s, c:c, h:h}; }
+  function mkOST(h,wi,bi){ return {rgb:ostRGB(h,wi,bi), label:ostLabel(h,wi,bi), wi:wi, bi:bi, h:h}; }
+
+  // ニュアンス（トーン）を固定して色相を動かす配色 → 色環を現在のニュアンスで描く
+  // （オストワルトでは「等価値色環」の再現にあたる）
+  const NUANCE_RING = { ncs_nuance:1, ncs_near:1, ost_similar:1, ost_contrast:1, ost_opposite:1 };
+
+  function genPalette(){
+    let pal=[];
+    if (theory==='NCS'){
+      if (scheme==='ncs_hue'){
+        let tones=[[baseS*0.35,baseC*0.7],[baseS,baseC],[baseS+22,baseC*0.9],[baseS+42,baseC*0.6]];
+        for (let i=0;i<tones.length;i++){ let sc=clampSC(tones[i][0],tones[i][1]); pal.push(mkNCS(baseHue,sc[0],sc[1])); }
+      } else if (scheme==='ncs_nuance'){
+        let hs=[baseHue,baseHue+100,baseHue+200,baseHue+300];
+        for (let i=0;i<hs.length;i++){ pal.push(mkNCS(hs[i],baseS,baseC)); }
+      } else if (scheme==='ncs_c'){
+        let ss=[6,26,46,66];
+        for (let i=0;i<ss.length;i++){ let sc=clampSC(ss[i],baseC); pal.push(mkNCS(baseHue,sc[0],sc[1])); }
+      } else if (scheme==='ncs_s'){
+        let cs=[10,30,52,74];
+        for (let i=0;i<cs.length;i++){ let sc=clampSC(baseS,cs[i]); pal.push(mkNCS(baseHue,sc[0],sc[1])); }
+      } else if (scheme==='ncs_w'){
+        let w=100-baseS-baseC; let rem=100-w; let ks=[0.18,0.42,0.66,0.9];
+        for (let i=0;i<ks.length;i++){ let sc=clampSC(ks[i]*rem,(1-ks[i])*rem); pal.push(mkNCS(baseHue,sc[0],sc[1])); }
+      } else if (scheme==='ncs_near'){
+        let hs=[baseHue-20,baseHue,baseHue+20,baseHue+40];
+        for (let i=0;i<hs.length;i++){ pal.push(mkNCS(hs[i],baseS,baseC)); }
+      }
+    } else {
+      if (scheme==='ost_isotint'){
+        let arr=[]; for (let bi=0;bi<=baseWi;bi++){ arr.push(bi); }
+        let bis=pickEven(arr,4);
+        for (let i=0;i<bis.length;i++){ pal.push(mkOST(baseHueO,baseWi,bis[i])); }
+      } else if (scheme==='ost_isotone'){
+        let arr=[]; for (let wi=baseBi;wi<=7;wi++){ arr.push(wi); }
+        let wis=pickEven(arr,4);
+        for (let i=0;i<wis.length;i++){ pal.push(mkOST(baseHueO,wis[i],baseBi)); }
+      } else if (scheme==='ost_isochrome'){
+        let d=baseWi-baseBi; let arr=[]; for (let wi=d;wi<=7;wi++){ arr.push(wi); }
+        let wis=pickEven(arr,4);
+        for (let i=0;i<wis.length;i++){ pal.push(mkOST(baseHueO,wis[i],wis[i]-d)); }
+      } else if (scheme==='ost_similar'){
+        let hs=[wrapHueO(baseHueO-3),baseHueO,wrapHueO(baseHueO+3)];
+        for (let i=0;i<hs.length;i++){ pal.push(mkOST(hs[i],baseWi,baseBi)); }
+      } else if (scheme==='ost_contrast'){
+        let hs=[baseHueO,wrapHueO(baseHueO+8),wrapHueO(baseHueO+16)];
+        for (let i=0;i<hs.length;i++){ pal.push(mkOST(hs[i],baseWi,baseBi)); }
+      } else if (scheme==='ost_opposite'){
+        let hs=[baseHueO,wrapHueO(baseHueO+12)];
+        for (let i=0;i<hs.length;i++){ pal.push(mkOST(hs[i],baseWi,baseBi)); }
+      } else if (scheme==='ost_achromatic'){
+        let idxs=[0,2,4,6];
+        for (let i=0;i<idxs.length;i++){ let g=WC[idxs[i]]/100*255; pal.push({rgb:[g,g,g],label:LET[idxs[i]],wi:idxs[i],bi:idxs[i]}); }
+      }
+    }
+    let seen={}, out=[];
+    for (let i=0;i<pal.length;i++){ if (!seen[pal[i].label]){ seen[pal[i].label]=1; out.push(pal[i]); } }
+    return out;
+  }
+
+  function draw(){
+    drawHeader(); drawHueRing(); drawTriangle(); drawPanel(); drawPalette(); drawFootnote();
+  }
+  function drawHeader(){
+    noStroke(); fill(30,30,34);
+    textAlign(LEFT,CENTER); textStyle(BOLD); textSize(21);
+    text(theory==='NCS' ? 'NCS 配色シミュレーター' : 'オストワルト 配色シミュレーター', 24, 26);
+    textStyle(NORMAL);
+    stroke(225); line(0,46,CW,46); noStroke();
+  }
+  function drawHueRing(){
+    let n = (theory==='NCS')?120:24;
+    let nr = (NUANCE_RING[scheme] === 1);   // ニュアンス固定の配色か
+    for (let i=0;i<n;i++){
+      let a0, a1, col;
+      if (theory==='NCS'){
+        a0 = i/n*TWO_PI; a1=(i+1)/n*TWO_PI;
+        let hv = (i+0.5)/n*400;
+        col = nr ? ncsRGB(hv, baseS, baseC) : ncsFull(hv);
+      } else {
+        let h=i+1;
+        a0 = (h-1.5)/24*TWO_PI; a1=(h-0.5)/24*TWO_PI;
+        col = nr ? ostRGB(h, baseWi, baseBi) : ostHueRGB[h];
+      }
+      noStroke(); fill(col[0],col[1],col[2]);
+      beginShape();
+      vertex(CCX+R_IN*sin(a0),  CCY-R_IN*cos(a0));
+      vertex(CCX+R_OUT*sin(a0), CCY-R_OUT*cos(a0));
+      vertex(CCX+R_OUT*sin(a1), CCY-R_OUT*cos(a1));
+      vertex(CCX+R_IN*sin(a1),  CCY-R_IN*cos(a1));
+      endShape(CLOSE);
+    }
+    fill(70); textSize(13); textAlign(CENTER,CENTER); textStyle(BOLD);
+    if (theory==='NCS'){
+      text('Y',CCX,CCY-R_OUT-13); text('R',CCX+R_OUT+13,CCY);
+      text('B',CCX,CCY+R_OUT+13); text('G',CCX-R_OUT-13,CCY);
+    } else {
+      let marks=[[2,'Y'],[8,'R'],[14,'UB'],[20,'SG']];
+      for (let i=0;i<marks.length;i++){
+        let a=(marks[i][0]-1)/24*TWO_PI;
+        text(marks[i][1], CCX+(R_OUT+16)*sin(a), CCY-(R_OUT+16)*cos(a));
+      }
+    }
+    textStyle(NORMAL);
+    let ah = (theory==='NCS') ? baseHue/400*TWO_PI : (baseHueO-1)/24*TWO_PI;
+    push();
+    translate(CCX+ (R_OUT+2)*sin(ah), CCY-(R_OUT+2)*cos(ah));
+    rotate(ah);
+    fill(25); noStroke();
+    triangle(0,-2,-6,-16,6,-16);
+    pop();
+    // 配色に含まれる他の色相を赤マーカーで明示（基準色＝黒と区別）
+    let palM = genPalette();
+    let seenH = {};
+    for (let i=0;i<palM.length;i++){
+      let hv = palM[i].h;
+      if (hv === undefined){ continue; }
+      let isBase = (theory==='NCS') ? (hv === ((baseHue%400)+400)%400) : (hv === baseHueO);
+      if (isBase){ continue; }
+      if (seenH[hv]){ continue; }
+      seenH[hv] = 1;
+      let a2 = (theory==='NCS') ? hv/400*TWO_PI : (hv-1)/24*TWO_PI;
+      push();
+      translate(CCX+(R_OUT+2)*sin(a2), CCY-(R_OUT+2)*cos(a2));
+      rotate(a2);
+      fill(222,32,38); stroke(255); strokeWeight(1.2);
+      triangle(0,-2,-5,-14,5,-14);
+      pop();
+    }
+    noStroke();
+    if (nr){
+      fill(90); textSize(10); textAlign(CENTER,TOP);
+      text(theory==='NCS' ? '色環＝現在のニュアンスで表示（s・c一定）'
+                          : '等価値色環（白色量・黒色量が一定）', CCX, CCY+R_OUT+20);
+    }
+    let bc = baseSwatchRGB();
+    noStroke(); fill(bc[0],bc[1],bc[2]);
+    circle(CCX,CCY,R_IN*2-14);
+    noFill(); stroke(255); strokeWeight(2); circle(CCX,CCY,R_IN*2-14); noStroke();
+  }
+  function drawTriangle(){
+    fill(90); noStroke(); textAlign(LEFT,CENTER); textSize(13);
+    text(theory==='NCS' ? 'トーン（ニュアンス）三角形' : '等色相三角形', Wx, Wy-18);
+    if (theory==='NCS'){
+      for (let py=Wy;py<=By;py+=7){
+        for (let px=Wx;px<=Cx;px+=7){
+          let b = bary(px,py, Wx,Wy, Bx,By, Cx,Cy);
+          if (b[0]>=-0.01 && b[1]>=-0.01 && b[2]>=-0.01){
+            let col = ncsRGB(baseHue, b[1]*100, b[2]*100);
+            noStroke(); fill(col[0],col[1],col[2]);
+            rect(px,py,8,8);
+          }
+        }
+      }
+      let p = ncsPoint(baseS,baseC);
+      noFill(); stroke(20); strokeWeight(3); circle(p[0],p[1],17);
+      stroke(255); strokeWeight(1.4); circle(p[0],p[1],17);
+    } else {
+      for (let wi=0;wi<8;wi++){
+        for (let bi=0;bi<=wi;bi++){
+          let p = ostPoint(wi,bi);
+          let col = ostRGB(baseHueO,wi,bi);
+          stroke(255,120); strokeWeight(1); fill(col[0],col[1],col[2]);
+          circle(p[0],p[1],17);
+          if (wi===baseWi && bi===baseBi){
+            noFill(); stroke(20); strokeWeight(3); circle(p[0],p[1],23);
+            stroke(255); strokeWeight(1.4); circle(p[0],p[1],23);
+          }
+        }
+      }
+    }
+    noFill(); stroke(180); strokeWeight(1.2);
+    triangle(Wx,Wy,Bx,By,Cx,Cy);
+    noStroke(); fill(60); textSize(13); textStyle(BOLD);
+    textAlign(RIGHT,CENTER); text('W', Wx-6, Wy);
+    text(theory==='NCS'?'S':'B', Bx-6, By);
+    textAlign(LEFT,CENTER); text('C', Cx+8, Cy);
+    textStyle(NORMAL);
+    drawSchemeLocus();
+  }
+
+  // 選択中の配色が三角形内のどこに当たるかを赤で明示
+  // （生成された実際の各色を三角形座標へ写像して結ぶ）
+  function drawSchemeLocus(){
+    const pal = genPalette();
+    let pts = [];
+    for (let i=0;i<pal.length;i++){
+      let p = null;
+      if (theory==='NCS'){
+        if (pal[i].s !== undefined){ p = ncsPoint(pal[i].s, pal[i].c); }
+      } else {
+        if (pal[i].wi !== undefined){ p = ostPoint(pal[i].wi, pal[i].bi); }
+      }
+      if (p){ pts.push({ x:p[0], y:p[1], label:pal[i].label }); }
+    }
+    // 同一点の重複を除去（色相だけ変わる配色では1点に集約される）
+    let uniq = [];
+    for (let i=0;i<pts.length;i++){
+      let dup = false;
+      for (let j=0;j<uniq.length;j++){
+        if (dist(pts[i].x,pts[i].y,uniq[j].x,uniq[j].y) < 1.5){ dup = true; }
+      }
+      if (!dup){ uniq.push(pts[i]); }
+    }
+    if (uniq.length === 0){ return; }
+    const R = 222, G = 32, B2 = 38;
+    if (uniq.length >= 2){
+      stroke(R,G,B2); strokeWeight(2.5); noFill();
+      beginShape();
+      for (let p of uniq){ vertex(p.x, p.y); }
+      endShape();
+    }
+    for (let p of uniq){
+      noFill(); stroke(255); strokeWeight(4.5); circle(p.x, p.y, 15);
+      stroke(R,G,B2); strokeWeight(2.5); circle(p.x, p.y, 15);
+    }
+    // 配色記号（「配色記号を表示」トグルに連動）
+    if (showLabels && uniq.length >= 2){
+      textSize(10);
+      for (let p of uniq){
+        const toRight = p.x < (Wx + Cx)/2 + 30;
+        const tw = textWidth(p.label);
+        const lx = toRight ? p.x + 12 : p.x - 12 - tw;
+        noStroke(); fill(255, 215);
+        rect(lx - 3, p.y - 8, tw + 6, 16, 3);
+        fill(R,G,B2); textAlign(LEFT, CENTER);
+        text(p.label, lx, p.y);
+      }
+    }
+    // 凡例
+    noStroke(); fill(R,G,B2); textSize(11); textAlign(LEFT,CENTER);
+    const legendY = By + 20;
+    stroke(R,G,B2); strokeWeight(2.5); line(Wx, legendY, Wx+26, legendY);
+    noStroke();
+    text(uniq.length >= 2 ? '赤＝この配色が三角形内でたどる系列'
+                          : '赤＝トーンは固定（色相のみ変化・環上の赤▲へ）', Wx+34, legendY);
+  }
+  function drawPanel(){
+    let bc = baseSwatchRGB();
+    noStroke(); fill(235,233,229); rect(PANX,58,PANW,86,8);
+    fill(bc[0],bc[1],bc[2]); rect(PANX+10,68,66,66,6);
+    stroke(200); noFill(); rect(PANX+10,68,66,66,6); noStroke();
+    fill(40); textAlign(LEFT,TOP); textSize(12);
+    text('基準色', PANX+88,72);
+    fill(20); textStyle(BOLD); textSize(18);
+    text(baseLabel(), PANX+88,90); textStyle(NORMAL);
+    fill(90); textSize(11);
+    text(baseSubLabel(), PANX+88,116);
+    fill(90); textSize(13); text('配色の種類', PANX,158);
+    schemeRects=[];
+    let list = SCHEMES[theory];
+    let y = 182;
+    for (let i=0;i<list.length;i++){
+      let rH=33, sel=(scheme===list[i].id);
+      let r={x:PANX,y:y,w:PANW,h:rH-4,id:list[i].id};
+      schemeRects.push(r);
+      noStroke(); fill(sel?color(40,44,52):color(238,236,232));
+      rect(r.x,r.y,r.w,r.h,6);
+      stroke(sel?255:150); strokeWeight(1.5); fill(sel?color(120,180,255):color(255));
+      circle(r.x+16,r.y+r.h/2,12);
+      if (sel){ noStroke(); fill(40,44,52); circle(r.x+16,r.y+r.h/2,5); }
+      noStroke(); fill(sel?255:60); textAlign(LEFT,CENTER); textSize(13);
+      text(list[i].jp, r.x+30, r.y+r.h/2);
+      y += rH;
+    }
+    toggleRect={x:PANX,y:y+8,w:PANW,h:28};
+    noStroke(); fill(238,236,232); rect(toggleRect.x,toggleRect.y,toggleRect.w,toggleRect.h,6);
+    stroke(150); strokeWeight(1.4); fill(showLabels?color(120,180,255):color(255));
+    rect(toggleRect.x+10,toggleRect.y+7,14,14,3);
+    if (showLabels){ noStroke(); fill(40,44,52); textAlign(CENTER,CENTER); textSize(12); text('✓',toggleRect.x+17,toggleRect.y+13); }
+    noStroke(); fill(60); textAlign(LEFT,CENTER); textSize(13);
+    text('配色記号を表示', toggleRect.x+34, toggleRect.y+14);
+  }
+  function drawPalette(){
+    let d='';
+    let list=SCHEMES[theory];
+    for (let i=0;i<list.length;i++){ if (list[i].id===scheme){ d=list[i].desc; } }
+    fill(40); noStroke(); textAlign(LEFT,TOP); textStyle(BOLD); textSize(15);
+    text('配色プレビュー', PALX,66); textStyle(NORMAL);
+    fill(95); textSize(12); text(d, PALX,86, PALW,20);
+    let pal=genPalette();
+    let n=max(pal.length,1);
+    let sw=PALW/n;
+    for (let i=0;i<pal.length;i++){
+      let c=pal[i].rgb;
+      noStroke(); fill(c[0],c[1],c[2]);
+      rect(PALX+i*sw, PALY, sw, PALH);
+      if (showLabels){
+        let lum=0.2126*c[0]+0.7152*c[1]+0.0722*c[2];
+        let footY=PALY+PALH-34;
+        noStroke();
+        if (lum>150){ fill(25,235); } else { fill(250,235); }
+        rect(PALX+i*sw, footY, sw, 34);
+        fill(lum>150?245:30); textAlign(CENTER,CENTER); textSize(sw<74?11:13);
+        text(pal[i].label, PALX+i*sw+sw/2, footY+17);
+      }
+    }
+    noFill(); stroke(200); strokeWeight(1); rect(PALX,PALY,PALW,PALH,3);
+    noStroke();
+  }
+  function drawFootnote(){
+    fill(120); noStroke(); textAlign(LEFT,CENTER); textSize(12);
+    text('色相サークルで基準色相を、三角形でトーンを選び、配色の種類を切り替えて右のプレビューを確認しよう。'
+       + '（色は各体系を再現した近似表示です）', 24, CH-16);
+  }
+  function bary(px,py, ax,ay, bx,by, cx,cy){
+    let d=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);
+    let a=((by-cy)*(px-cx)+(cx-bx)*(py-cy))/d;
+    let b=((cy-ay)*(px-cx)+(ax-cx)*(py-cy))/d;
+    return [a,b,1-a-b];
+  }
+  function ncsPoint(s,c){
+    let w=100-s-c;
+    return [(Wx*w+Bx*s+Cx*c)/100, (Wy*w+By*s+Cy*c)/100];
+  }
+  function ostPoint(wi,bi){
+    let white=WC[wi], black=BC[bi], pure=100-white-black;
+    return [(Wx*white+Bx*black+Cx*pure)/100, (Wy*white+By*black+Cy*pure)/100];
+  }
+  function baseSwatchRGB(){ return theory==='NCS' ? ncsRGB(baseHue,baseS,baseC) : ostRGB(baseHueO,baseWi,baseBi); }
+  function baseLabel(){ return theory==='NCS' ? ncsLabel(baseHue,baseS,baseC) : ostLabel(baseHueO,baseWi,baseBi); }
+  function baseSubLabel(){
+    if (theory==='NCS'){ return '黒み s='+round(baseS)+'  色み c='+round(baseC)+'  白み w='+round(100-baseS-baseC); }
+    let white=WC[baseWi], black=BC[baseBi];
+    return '白='+white+'  黒='+black+'  純='+round(100-white-black)+'  色相'+baseHueO;
+  }
+
+  function inRect(mx,my,r){ return mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h; }
+  function press(mx,my,isPress){
+    if (isPress){
+      if (toggleRect && inRect(mx,my,toggleRect)){ showLabels=!showLabels; }
+      else {
+        for (let i=0;i<schemeRects.length;i++){
+          if (inRect(mx,my,schemeRects[i])){ scheme=schemeRects[i].id; }
+        }
+      }
+    }
+    let dd=dist(mx,my,CCX,CCY);
+    if (dd>=R_IN-6 && dd<=R_OUT+6){
+      let th=atan2(mx-CCX, -(my-CCY)); if (th<0){ th+=TWO_PI; }
+      if (theory==='NCS'){ baseHue=(round(th/TWO_PI*400/10)*10)%400; }
+      else { baseHueO=wrapHueO(round(th/TWO_PI*24)+1); }
+    }
+    if (mx>=Wx-10 && mx<=Cx+10 && my>=Wy-6 && my<=By+6){
+      if (theory==='NCS'){
+        let b=bary(mx,my, Wx,Wy, Bx,By, Cx,Cy);
+        if (b[0]>=-0.05 && b[1]>=-0.05 && b[2]>=-0.05){
+          let s=constrain(b[1]*100,0,100), c=constrain(b[2]*100,0,100);
+          if (s+c>100){ let k=100/(s+c); s*=k; c*=k; }
+          baseS=round(s/5)*5; baseC=round(c/5)*5;
+        }
+      } else {
+        let best=999, bw=baseWi, bb=baseBi;
+        for (let wi=0;wi<8;wi++){
+          for (let bi=0;bi<=wi;bi++){
+            let p=ostPoint(wi,bi); let dp=dist(mx,my,p[0],p[1]);
+            if (dp<best){ best=dp; bw=wi; bb=bi; }
+          }
+        }
+        if (best<22){ baseWi=bw; baseBi=bb; }
+      }
+    }
+  }
+  function key(k,kc){}
+
+  return { W:CW, H:CH, setup:setup, setTheory:setTheory, draw:draw, press:press, key:key };
+})();
+
+// タブから体系を指定して共通実装を呼ぶ薄いラッパー
+const OstwaldModule = {
+  id:'ostwald', label:'オストワルト', W:NcsOstwald.W, H:NcsOstwald.H,
+  draw(){ NcsOstwald.setTheory('OSTWALD'); NcsOstwald.draw(); },
+  press(mx,my,p){ NcsOstwald.setTheory('OSTWALD'); NcsOstwald.press(mx,my,p); },
+  key(k,kc){ NcsOstwald.key(k,kc); }
+};
+const NcsModule = {
+  id:'ncs', label:'NCS', W:NcsOstwald.W, H:NcsOstwald.H,
+  setup(){ NcsOstwald.setup(); },   // オストワルト色環の生成（lerp/floor 依存）はここで実行
+  draw(){ NcsOstwald.setTheory('NCS'); NcsOstwald.draw(); },
+  press(mx,my,p){ NcsOstwald.setTheory('NCS'); NcsOstwald.press(mx,my,p); },
+  key(k,kc){ NcsOstwald.key(k,kc); }
+};
+</script>
+</body>
+</html>
